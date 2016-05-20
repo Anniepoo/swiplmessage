@@ -1,0 +1,306 @@
+Error Handling and Messages in SWI-Prolog
+=========================================
+Anne Ogborn <annie66us@yahoo.com>
+:Author Initials: AO
+:toc2:
+:icons:
+:numbered:
+:website: http://www.pathwayslms.com/swipltuts/
+:theme: pathways
+
+link:/swipltuts/index.html[Up to All Tutorials]
+
+== About This Tutorial
+
+Every useful library will, sooner or later, encounter an abnormal condition, like a missing file, that the library itself can't handle. The usual reaction of the program is often to somehow display an error message.
+ 
+Simply printing unstructured text out stderr is inconvenient for library users, who may need to handle the condition programmatically, translate the message, or display the message elsewhere, like a GUI or web page. Letting the library user control all this increases code reuse.
+
+This tutorial is about handling such conditions properly, especially in libraries, using a system borrowed from Quintus Prolog. It is particularly important for authors of packs to follow this method, and not simply use format/3.
+
+It should take most programmers well under an hour.
+
+This tutorial should be accessible to any programmer who understands the basics of Prolog. While this tutorial is about SWI-Prolog's implementation, it should apply to most near ISO Prologs. 
+ 
+== The Pipeline
+
+Message handling follows a pipeline. The rest of this tutorial explores that pipeline in detail, but here's a simplified version
+
+A _message_ enters the pipeline through +print_message/2+ , either because +print_message/2+ was called by the application programmer, or because an exception wasn't caught. The top-level handles all otherwise not caught exceptions by passing them to +print_message/2+.
+
+The format of a message is the same as the standardized format of an exception. Since Prolog is typeless, a message is, effectively, just an exception term.
+
+A pipeline with lots of hooks produces a list of tokens (called "lines") to be output.
+
+The token list is passed to another hookable predicate, +print_message_lines/1+, to be printed, sent to the web page, or whatever.
+
+This is the basics. Here's the complete pipeline, in all it's gory detail:
+
+image:images/messagepipeline.svg[Message Pipeline]
+
+== Producing a Message Term
+
+The message pipeline starts with a _semantic_message_ . 
+
+=== Semantic Messages
+
+A _semantic_message_ is a compound term that defines the message in terms of it's meaning, or _semantics_ , instead of creating a string representation.
+
+For example, here's the term that means "File Not Found"
+
+----
+	3 ?- catch(open('nosuchfile.txt', read, _), E, true).
+	E = error(existence_error(source_sink, 'nosuchfile.txt'), context(system:open/3, 'No such file or directory')).
+----
+
+Semantically, E means something like  "An error, specifically that source_sink nosuchfile.txt doesn't exist. This happened in +system:open/3+ . A good error message might be 'No such file or directory' "
+
+Which is a lot more flexible than the string 'No such file or directory' . By having hooks in the pipeline, set up by the application programmer, do the translation, the library programmer isn't forcing his or her way on the application programmer. The application programmer can print "Bestand of map bestaat niet", log the error, or whatever's appropriate.
+
+To let the handler 'understand' the term, we need to restrict its form. As you've already seen, the SWI-Prolog libraries throw compound terms. These terms are defined in the link:[http://www.deransart.fr/prolog/exceptions.html][ISO Standard] exception set. I encourage having this page open during this tutorial, and bookmarking it and referring to it when writing Prolog code.
+
+_error_ means that this is an error. You might also want to use this mechanism to display messages from the library that aren't errors. Such messages might have another outer functor.
+
+The ISO messages cover most possible errors. The first argument must conform to the ISO standard. The second term is 'implementation dependent', but is often a context term whose first argument is the signature of the throwing predicate, and whose second is an English representation of the error.
+
+There is one other message you should know about, but avoid using.
+The message +format(Format, ArgList)+ is predefined to translate to the string that would result from +format/2+. 
+
+Don't do this. It short circuits the whole idea of a semantic error term.
+
+Finally, there's a message form +debug/2+, which is produced by the +debug/3+ predicate and handled by the debug message system.
+
+Exercise: Generate a half dozen error terms by doing illegal things in SWI-Prolog and catching the error, like above.
+
+Exercise: Imagine you're writing a library to connect to an external service, say an LDAP server. Use the linked page above and figure out what ISO error term should be thrown if the server can't be reached.
+
+Exercise: Take a library you've written, preferably in Prolog, but in any language, and look through it for an error message. How is the message constructed? Imagine your library is being used in a dedicated machine controller with an oddball display, for sale in Japan. Will your library need modified?
+
+Exercise: With the same or different code, look at the normal program output code. If it instead put out semantic terms, could it be used in other situations you might not have considered when it was written?
+
+Exercise: When was the last time you were paid to write code that parsed output of a library because the library's output wasn't in a convenient format? How much were you paid? How many programmers are there in the world?
+ 
+=== Originating Messages
+
+There are three ways of feeding a message into the pipeline.
+
+Messages can be sent directly by calling +print_message/2+ with the message term.
+
+Messages result from uncaught errors that reach the top level.
+
+Messages can also result from calling +debug/3+.
+ 
+== Exceptions
+
+The language construct provided for abnormal conditions is, like many languages, throw and catch.
+
+When code detects a condition that it can't handle on it's own, it calls +throw/1+. The calling stack is unwound until it is _caught_, usually by a meta-predicate like +catch/3+.
+
+Programmers familiar with Java will recognize this mechanism.
+
+.Some Examples of Exceptions
+----
+1 ?- catch(throw(taco), C, writeln(C)).    <1>
+taco
+C = taco.
+
+2 ?- catch(X is 3 / 1, C, writeln(C)).   <2>
+X = 3.
+
+3 ?- catch(fail, C, writeln(C)).   <3>
+false.
+
+11 ?- catch(X is 3 / 0, C, fail).   <4>
+false.
+
+4 ?- catch(throw(taco), burrito, writeln(C)). <5>
+ERROR: Unhandled exception: taco
+
+5 ?- catch(X is 3 / 0 , C, writeln(C)).   <6>
+error(evaluation_error(zero_divisor),context((/)/2,_G1943))   <7>
+C = error(evaluation_error(zero_divisor), context((/)/2, _G1943)).
+
+6 ?- catch(open(_, _, _) , C, writeln(C)).    <8>
+error(instantiation_error,context(system:open/3,_G2488))
+C = error(instantiation_error, context(system:open/3, _G2488)).
+
+7 ?- catch(open(3, read, _) , C, writeln(C)).    <9>
+error(type_error(text,3),context(system:open/3,_G3054))
+C = error(type_error(text, 3), context(system:open/3, _G3054)).
+
+% defined in a file
+foo(X, Y) :- Y is 3 / X.
+bar(X, Y) :- foo(X, Y).
+
+8 ?- catch(bar(0, Y), C, writeln(C)).      <10>
+error(evaluation_error(zero_divisor),context((/)/2,_G1943))
+C = error(evaluation_error(zero_divisor), context((/)/2, _G1943)).
+
+----
+
+<1> We explicitly call throw. _taco_ is an arbitrary term that is returned as C. +catch/3+ 
+<2> Where's the output?  We don't throw, so we don't call the goal in the third argument
+<3> When the first argument goal fails, catch fails
+<4> If the third argument goal fails after the first argument has thrown, catch fails. 
+<5> Throw is caught only when the second argument of +catch/3+ unifies. Here it doesn't, so we continue up the stack to the top level, which displays an error message.
+<6> We don't explicitly call throw, but the +/+ operator throws if it's divisor is zero.
+<7> This time C is a complex term. We'll learn about this term in the section _ISO Exceptions_
+<8> Calling open with a request to open some file whose name we don't know, in a mode we're not sure of, isn't realistic. The first two arguments of +open/3+ need to be instantiated. The thrown term contains +instantiation_error+.
+<9> Lets try calling open with 3 as a filename. Nope - can't use a number as a filename. It wants text, so it throws a type_error.
+<10> bar calls foo, which throws. We unwind all the way back to the catch.
+
+=== Catching Exceptions
+
+As we've seen above, +catch/3+ takes a goal as it's first and third arguments. If we call +catch(A, B, C)+
+
+If
+
+ * A succeeds: the catch succeeds. 
+ * A fails: the catch fails
+ * A throws a term that unifies with B: calls C as in +call/1+
+ * A throws a term that doesn't unify with B: the catch doesn't catch - the throw 'goes through' the catch (rethrows)
+
+ There are a couple convenient metapredicates that act much like the try-catch-finally in languages that use coffee analogies: +setup_call_catcher_cleanup(:Setup, :Goal, +Catcher, :Cleanup)+ and +setup_call_cleanup(:Setup, :Goal, +Catcher, :Cleanup)+
+ 
+ === Decorating Exceptions
+ 
+ Of course we might want to grab some additional information on the way out. You can decorate the exception with +prolog_exception_hook/2+ .
+ The stack trace is the obvious thing to add, but you might want other control.
+ 
+Exercise: Type in the prolog above, trying the various ways to throw
+
+Exercise: Type catch into the SWI-Prolog website search box, and look at some of the options that come up
+
+Exercise: You've written a nifty machine learning system that requires a training file, training.data. Users pass your system file names and you analyze them somehow. You've released your creation, and are getting an annoying number of support queries from users who don't have a training file in the right place. 
+
+Write a small facade that detects when the thrown exception is missing file because it can't find the training file, and when the user's asked for a nonexistant file to be analyzed. Have it throw two different ISO exceptions that make it clear to the user when the file they're missing is the training data.
+
+Do this in two different ways: Rethrow a new exception, and use the exception hook.
+ 
+== Converting Messages to Strings
+
+Earlier we tried catching the error term. What happens if we don't?
+
+----
+   1 ?- open('nosuchfile.txt', read, _).
+ERROR: open/3: source_sink 'nosuchfile.txt' does not exist (No such file or directory)
+----
+
+OK, where'd that error message come from? Much more readable than the message term, but we have to convert from one to the other. And there's the rub. Lets handle that next.
+
+[http://www.swi-prolog.org/pldoc/doc_for?object=print_message/2][+print_message/2+] takes two arguments, the kind of message and the message term.
+
+The kind of message is an atom that describes what general kind of message it is. There are lots of kinds of message, and we leave you to check them out.  An often overlooked kind is +help+ .
+
+Well, what really happens next is translating from the message term to a list of _tokens_. In the simplest case, these tokens are atoms that will become lines of output. This is the point where semantics becomes words.
+
+The translation process uses the multifile DCG +prolog:message//1+ .
+
++prolog:message//1+ is called using phrase, and passing the message term as it's semantic argument. If it succeeds, the list it generates will be the token list.
+
+Some messages are predefined in SWI-Prolog. They're a good example of +prolog:message//1+. Here's some of them defined in license.pl :
+
+----
+
+	:- multifile
+		prolog:message/3.
+
+	prolog:message(unknown_license(License)) -->
+		[ 'Unknown license: ~w.  Known licenses are:'-[License], nl ],
+		license_list.
+	prolog:message(license(gpl, Modules)) -->
+		[ 'This system may only distributed using the GNU General Public License', nl,
+		  'because the following components contain GPL-ed code:', nl, nl
+		],
+		file_list(Modules),
+		see_also.
+	prolog:message(license(lgpl)) -->
+		[ 'This program may be distributed under any license, provided all', nl,
+		  'conditions implied by the GNU Lesser General Public License', nl,
+		  'are satisfied.  In particular, this implies the source code', nl,
+		  'to any modification in SWI-Prolog or one of the used libraries', nl,
+		  'must be made available.', nl
+		],
+		see_also.
+	prolog:message(license(proprierary(L), Modules)) -->
+		{ license(L, _, Att) },
+		{   memberchk(comment(C), Att)
+		->  true
+		;   C = L
+		},
+		[ nl,
+		  'The program contains modules covered by the "~w" license'-[C], nl
+		],
+		(   { memberchk(url(URL), Att) }
+		->  [ 'See ~w'-[URL], nl ]
+		;   []
+		),
+		[ nl ],
+		file_list(Modules).
+
+----
+
+Notice that not every element of the list is an atom. +print_message_lines/3+ defines a number of tokens. Here's some of them:
+
+ * <format>-<args>  Where Format is an atom and Args is a list of format arguments. Handed to format/3.
+ * flush            Flush the output. Suppress the final newline
+ * some ansi coloring related tokens - see the docs
+ * nl  start a new line of the message
+ 
+Defining your own messages and default +prolog:message//1+ handlers can make your library much more powerful.
+
+Exercise: Use the last exercise in the last set (the training.data problem). Define a clear message for the user explaining how to get a training file, using the message/1 mechanism
+
+Exercise: Look through your own Prolog code for what terms you throw.
+
+Exercise: Take a small console 'hack' you've written and clean it up so it uses the message system to display it's output. 
+
+Exercise: Define a message type, and +prolog:message//1+ handler for it that produces some reasonable message using every kind of token you can from +print_message_lines/3+.
+ 
+== Producing Output
+
+We now have a list of tokens. We can, if we want, get a string at this point by calling +message_to_string/2+.
+
+All that's left is to actually display the output to the user in a way appropriate for the application.
+
+The pipeline can be hooked at this point. If the hook succeeds, it's handled the printing, or flag waving, or whatever output, and the pipeline ends. If not, it's passed onto +print_message_lines/3+ for processing.
+
+But, there are actually *two* hooks. The first checked is a thread_local hook predicate, +thread_message_hook/3+. The second is +message_hook/2+. So messages can be handled differently, for example, if they're on an HTTP handler thread than if they're on backend threads.
+
+Both take the same 3 arguments: The message term, the kind of message (from +print_message/2+) and the list of tokens.
+
+If we're going to print it somehow, +message_to_string/2+ will give us the string, and we output it however's appropriate. That could be munging the output somehow and passing it to +print_message_lines/3+, or it could be something completely different.
+
+If the hooks fail, the message goes to +print_message_lines/3+, which takes a stream to print on, a prefix to prepend on every line, and the list of tokens. The prefix is probably something like the current mode or module.
+
+Notice that the kind isn't passed to +print_message_lines/3+. We can influence the way +print_message_lines/3+ prints, depending on kind, by using +message_property/2+. This is how we can get things like WARNING on the front of the line. A very useful option to +message_property/2+ is location_prefix, which allows printing the source file and line number if it's set before the process is set off.
+
+You can also set the stream to output to, and have the system wait after displaying the message.
+
+Exercise: Make a little console quiz program that asks a few questions about animals. Keep a score in a file, and color questions, answers, and correct and incorrect feedback different colors. All output from the program should go through the message pipeline.
+
+Exercise: Without touching the console version, make it work in a web page.
+
+Exercise: Find a piece of Prolog code you like and clean it up so it passes all output through the pipeline. Provide appropriate default +message//1+, and perhaps contextual coloring for output.
+
+Exercise: Sit around a bit and try to think up cool, out of the box uses for the message pipeline.
+
+== Takeaway
+
+Don't directly print messages from your library code with format. Use the messaging system.
+
+Your users will love you for it.
+
+Your library will become much more maintainable and reusable.
+
+Your teeth will be whiter, and your children smarter and better behaved.
+
+== Acknowledgements
+
+Thanks to Jan Wielemaker, who patiently explained some of the fine points of all this, and who first encouraged me to write this tutorial.
+
+Thanks to Paulo Moura, who explained a few more.
+
+
+
+
